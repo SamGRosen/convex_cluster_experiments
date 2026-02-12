@@ -1,0 +1,407 @@
+```{r}
+library(ggthemes)
+library(scales)
+library(latex2exp)
+library(aricode)
+
+source("./helpers.R")
+```
+
+
+```{r}
+set.seed(2)
+
+means <- matrix(c(c(1.5, 2),
+         c(-2.5, 1),
+         c(0, -1.25)), nrow = 3, ncol = 2, byrow = T)
+
+cov_1 <- matrix(c(1, -0.4,
+                  -0.4, 1), nrow=2)
+cov_2 <- matrix(c(1, 0.5,
+                  0.5, 1), nrow=2)
+cov_3 <- matrix(c(1, 0,
+                  0, 1), nrow=2)
+covs <- array(c(cov_1, cov_2, cov_3), dim = c(2, 2, 3))
+trial = generate_trial(3, 20, means, covs)
+
+X <- trial$X
+E <- X - trial$U
+labels <- trial$labels
+
+grid_points <- expand.grid(seq(min(X[, 1]), max(X[, 1]), 0.01), 
+                           seq(min(X[, 2]), max(X[, 2]), 0.01))
+
+density_tibble <- tibble(
+  x = rep(grid_points[, 1], 3),
+  y = rep(grid_points[, 2], 3),
+  density = c(dmvnorm(grid_points, mean = means[1,], sigma = covs[,, 1]),
+              dmvnorm(grid_points, mean = means[2,], sigma = covs[,, 2]),
+              dmvnorm(grid_points, mean = means[3,], sigma = covs[,, 3])),
+  label = rep(c(1, 2, 3), each = nrow(grid_points))
+)
+
+```
+
+```{r}
+gammas <- seq(0, 100, 0.01)
+
+knn_weights_3 <- sparse_weights(trial$X, 3, 0, connected = F, scale = F)
+knn_solutions_3 <- get_all_info(trial, knn_weights_3, gammas)
+
+knn_weights_4 <- sparse_weights(trial$X, 4, 0, connected = F, scale = F)
+knn_solutions_4 <- get_all_info(trial, knn_weights_4, gammas)
+
+knn_weights_5 <- sparse_weights(trial$X, 5, 0, connected = F, scale = F)
+knn_solutions_5 <- get_all_info(trial, knn_weights_5, gammas)
+
+gammas <- seq(0, 1000, 0.1)
+knn_weights_kernel_3 <- sparse_weights(trial$X, 3, 1, connected = F, scale = F)
+knn_solutions_kernel_3 <- get_all_info(trial, knn_weights_kernel_3, gammas)
+
+knn_weights_kernel_4 <- sparse_weights(trial$X, 4, 1, connected = F, scale = F)
+knn_solutions_kernel_4 <- get_all_info(trial, knn_weights_kernel_4, gammas)
+
+knn_weights_kernel_5 <- sparse_weights(trial$X, 5, 1, connected = F, scale = F)
+knn_solutions_kernel_5 <- get_all_info(trial, knn_weights_kernel_5, gammas)
+
+knn_first_connections <- get_first_connections(knn_solutions$clusterpath$clusters_df)
+```
+
+
+```{r}
+plot_affinity_graph <- function(points_df, edges_df, title = "", density_tibble = NA,
+                                alpha_weights = F) {
+  num_clusters <- length(unique(points_df$label))
+  if(is_tibble(density_tibble)) {
+    density_geom <- geom_contour(
+      data = density_tibble,
+      aes(x, y, z = density, color = factor(label), group = label),
+      alpha = 0.5, bins = 8)
+  } else {
+    density_geom <- geom_blank()
+  }
+  
+  if(alpha_weights) {
+    edges_geom <- geom_segment(
+      data = edges_df |> filter(from > to),
+      aes(
+        x = x,
+        y = y,
+        xend = xend,
+        yend = yend,
+        alpha = value
+      ),
+      linewidth = 1
+    )
+  } else {
+    edges_geom <- geom_segment(
+      data = edges_df |> filter(from > to),
+      aes(x = x, y = y, xend = xend, yend = yend),
+      linewidth = 1
+    )
+  }
+  ggplot(points_df) +
+    density_geom +
+    edges_geom +
+    geom_point(aes(x, y, shape = factor(label), fill = factor(label)), 
+               size = 3, stroke = 0.75) +
+    scale_shape_manual(values = 21:25) +
+    scale_fill_manual(values=colorblind_pal()(num_clusters + 1)[-1]) +
+    scale_color_manual(values=colorblind_pal()(num_clusters + 1)[-1], guide = "none") +
+    labs(fill = "True Component", shape = "True Component") +
+    theme_minimal() +
+    theme(axis.title.x=element_blank(),
+          axis.title.y=element_blank()) +
+    ggtitle(title)
+}
+
+```
+
+```{r}
+plot_affinity_graph(knn_solutions_3$plot_dfs$points,
+                    knn_solutions_3$plot_dfs$edges, 
+                    "3-nearest neighbors graph for mixture model samples",
+                    density_tibble = density_tibble)
+
+plot_affinity_graph(knn_solutions_4$plot_dfs$points,
+                    knn_solutions_4$plot_dfs$edges, 
+                    "4-nearest neighbors graph for mixture model samples",
+                    density_tibble = density_tibble)
+
+plot_affinity_graph(knn_solutions_5$plot_dfs$points,
+                    knn_solutions_5$plot_dfs$edges, 
+                    "5-nearest neighbors graph for mixture model samples",
+                    density_tibble = density_tibble)
+
+# ggsave(file="convex_clustering_figures/neighbor_graph.pdf", device="pdf",
+#        dpi = 600,
+#        width = 3,
+#        height = 2,
+#        units = "in",
+#        scale = 2)
+```
+
+```{r}
+plot_affinity_graph(knn_solutions_kernel_3$plot_dfs$points,
+                    knn_solutions_kernel_3$plot_dfs$edges, 
+                    "3-nearest neighbors graph (kernel) for mixture model samples",
+                    density_tibble = density_tibble,
+                    alpha_weights = T)
+
+plot_affinity_graph(knn_solutions_kernel_4$plot_dfs$points,
+                    knn_solutions_kernel_4$plot_dfs$edges, 
+                    "4-nearest neighbors graph (kernel) for mixture model samples",
+                    density_tibble = density_tibble,
+                    alpha_weights = T)
+
+plot_affinity_graph(knn_solutions_kernel_5$plot_dfs$points,
+                    knn_solutions_kernel_5$plot_dfs$edges, 
+                    "5-nearest neighbors graph (kernel) for mixture model samples",
+                    density_tibble = density_tibble,
+                    alpha_weights = T)
+
+```
+
+```{r}
+plot_solution_path <- function(points_df, solution_path_df, cluster_df, num_est_clusters, title = "", density_tibble = NA) {
+  manual_fill <- hue_pal()(num_est_clusters)
+  
+  points_df <- points_df |>
+    inner_join(cluster_df |> 
+                 filter(num_cluster == num_est_clusters), by = "id")
+
+  if(is_tibble(density_tibble)) {
+    density_geom <- geom_contour(
+      data = density_tibble, 
+      aes(x, y, z = density, color = factor(label), group = label),
+                    alpha = 0.5, bins = 8)
+  } else {
+    density_geom <- geom_blank()
+  }
+  ggplot(points_df) +
+    density_geom + 
+    geom_path(data = solution_path_df, aes(x = x, y = y, group = id)) +
+    geom_point(aes(x, y, shape = factor(label), fill = factor(est_label)),
+               size = 3, stroke = 0.75) +
+    scale_shape_manual(values = 21:25) +
+    scale_fill_manual(values = manual_fill) +
+    scale_color_manual(values = colorblind_pal()(3 + 1)[-1], guide = "none") +
+    labs(shape = "True Component") +
+    theme_minimal() +
+    guides(
+      fill = guide_legend(ncol = 1, override.aes=list(color=manual_fill),
+                          title = "Estimated Component", order = 0),
+      shape = guide_legend(order = 1)
+    ) +
+    theme(axis.title.x=element_blank(),
+          axis.title.y=element_blank()) +
+    ggtitle(title)
+}
+
+```
+
+```{r}
+plot_solution_path(knn_solutions_3$plot_dfs$points,
+                   knn_solutions_3$clusterpath$solutions_df,
+                   knn_solutions_3$clusterpath$clusters_df,
+                   knn_solutions_3$cluster_ari |> slice_max(ari) |> pull(num_cluster),
+                   "Convex clustering solution path with 3-nearest neighbors graph",
+                   density_tibble = density_tibble)
+
+plot_solution_path(knn_solutions_4$plot_dfs$points,
+                   knn_solutions_4$clusterpath$solutions_df,
+                   knn_solutions_4$clusterpath$clusters_df,
+                   knn_solutions_4$cluster_ari |> slice_max(ari) |> pull(num_cluster),
+                   "Convex clustering solution path with 4-nearest neighbors graph",
+                   density_tibble = density_tibble)
+
+plot_solution_path(knn_solutions_5$plot_dfs$points,
+                   knn_solutions_5$clusterpath$solutions_df,
+                   knn_solutions_5$clusterpath$clusters_df,
+                   knn_solutions_5$cluster_ari |> slice_max(ari) |> pull(num_cluster),
+                   "Convex clustering solution path with 5-nearest neighbors graph",
+                   density_tibble = density_tibble)
+# ggsave(file="convex_clustering_figures/neighbor_graph_solutions.pdf", device="pdf",
+#        dpi = 600,
+#        width = 3,
+#        height = 2,
+#        units = "in",
+#        scale = 2)
+```
+
+```{r}
+plot_solution_path(knn_solutions_kernel_3$plot_dfs$points,
+                   knn_solutions_kernel_3$clusterpath$solutions_df,
+                   knn_solutions_kernel_3$clusterpath$clusters_df,
+                   knn_solutions_kernel_3$cluster_ari |> slice_max(ari) |> pull(num_cluster),
+                   "Convex clustering solution path with 3-nearest neighbors graph",
+                   density_tibble = density_tibble)
+
+plot_solution_path(knn_solutions_kernel_4$plot_dfs$points,
+                   knn_solutions_kernel_4$clusterpath$solutions_df,
+                   knn_solutions_kernel_4$clusterpath$clusters_df,
+                   knn_solutions_kernel_4$cluster_ari |> slice_max(ari) |> pull(num_cluster),
+                   "Convex clustering solution path with 4-nearest neighbors graph",
+                   density_tibble = density_tibble)
+
+plot_solution_path(knn_solutions_kernel_5$plot_dfs$points,
+                   knn_solutions_kernel_5$clusterpath$solutions_df,
+                   knn_solutions_kernel_5$clusterpath$clusters_df,
+                   knn_solutions_kernel_5$cluster_ari |> slice_max(ari) |> pull(num_cluster),
+                   "Convex clustering solution path with 5-nearest neighbors graph",
+                   density_tibble = density_tibble)
+
+knn_solutions_kernel_3$cluster_ari |> slice_max(ari)
+knn_solutions_kernel_4$cluster_ari |> slice_max(ari)
+knn_solutions_kernel_5$cluster_ari |> slice_max(ari)
+```
+
+```{r}
+plot_affinity_diagnostics <- function(points_df, edges_df, title = "") {
+  num_clusters <- length(unique(points_df$label))
+
+  ggplot(points_df) +
+    geom_segment(data = edges_df |> filter(from < to), 
+                 aes(x = x, y = y, xend = xend, yend = yend, 
+                     linetype = `Within-component Edge`, color = F_dagger_row_norm),
+                 alpha = 1, linewidth = 1) +
+    geom_point(aes(x, y, shape = factor(label), fill = factor(label)), 
+               size = 3, stroke = 0.75) +
+    scale_shape_manual(values = 21:25) +
+    scale_fill_manual(values = colorblind_pal()(num_clusters + 1)[-1]) +
+    labs(fill = "True Component", shape = "True Component") +
+    theme_minimal() +
+    scale_color_viridis_c(option = "magma", begin = 0, end = 0.90,
+                          name = TeX("$\\|F^\\dagger_{i \\cdot}\\|_2$")) +
+    scale_linetype_manual(values = c("41", "solid")) +
+    theme(axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          legend.margin = margin(2, 2, 2, 2)) +
+    guides(
+      linetype = guide_legend(order = -1),
+      shape = guide_legend(order = -2),
+      fill = guide_legend(order = -2)
+    ) +
+    ggtitle(title)
+}
+
+```
+
+```{r}
+plot_affinity_diagnostics(knn_solutions_3$plot_dfs$points,
+                          knn_solutions_3$plot_dfs$edges,
+                          "3-nearest neighbors graph for mixture model samples")
+
+plot_affinity_diagnostics(knn_solutions_4$plot_dfs$points,
+                          knn_solutions_4$plot_dfs$edges,
+                          "4-nearest neighbors graph for mixture model samples")
+
+plot_affinity_diagnostics(knn_solutions_5$plot_dfs$points,
+                          knn_solutions_5$plot_dfs$edges,
+                          "5-nearest neighbors graph for mixture model samples")
+
+# ggsave(file="convex_clustering_figures/neighbor_graph_bottlenecks.pdf", device="pdf",
+#        dpi = 600,
+#        width = 3,
+#        height = 2,
+#        units = "in",
+#        scale = 2)
+
+```
+
+```{r}
+gammas <- seq(0, 100, 0.01)
+
+oracle_weights <- get_oracle_graph(20, 3)
+oracle_solutions <- get_all_info(trial, oracle_weights, gammas)
+```
+
+```{r}
+
+plot_affinity_graph(oracle_solutions$plot_dfs$points,
+                    oracle_solutions$plot_dfs$edges,
+                    density_tibble = density_tibble)
+
+plot_solution_path(oracle_solutions$plot_dfs$points,
+                   oracle_solutions$clusterpath$solutions_df,
+                   oracle_solutions$clusterpath$clusters_df,
+                   oracle_solutions$cluster_ari |> slice_max(ari) |> pull(num_cluster),
+                   "",
+                   density_tibble = density_tibble)
+
+# ggsave(file="convex_clustering_figures/oracle_graph_example.pdf", device="pdf",
+#        dpi = 600,
+#        width = 3,
+#        height = 2,
+#        units = "in",
+#        scale = 2)
+```
+
+```{r}
+gammas <- seq(0, 100, 0.01)
+
+kernel_weights <- get_fully_connected_weighted_graph(trial$X, 1/sqrt(2))
+kernel_solutions <- get_all_info(trial, kernel_weights, gammas)
+```
+
+```{r}
+
+plot_affinity_graph(kernel_solutions$plot_dfs$points,
+                    kernel_solutions$plot_dfs$edges,
+                    density_tibble = density_tibble,
+                    alpha_weights = T) +
+  scale_alpha_continuous(trans = "log1p")
+
+plot_solution_path(kernel_solutions$plot_dfs$points,
+                   kernel_solutions$clusterpath$solutions_df,
+                   kernel_solutions$clusterpath$clusters_df,
+                   kernel_solutions$cluster_ari |> slice_max(ari) |> pull(num_cluster),
+                   "",
+                   density_tibble = density_tibble)
+
+# ggsave(file="convex_clustering_figures/oracle_graph_example.pdf", device="pdf",
+#        dpi = 600,
+#        width = 3,
+#        height = 2,
+#        units = "in",
+#        scale = 2)
+```
+
+```{r}
+
+# ggplot(knn_plot$edges) +
+#   geom_point(aes( effective_resistance, smallest_lambda, color = dist)) +
+#   scale_color_viridis_c() +
+#   scale_y_continuous(trans = "log")
+
+ggplot(knn_first_connections) +
+  geom_point(aes(smallest_lambda, eff_res * dist, color = dist)) +
+  scale_color_viridis_c(trans="sqrt") + 
+  scale_x_continuous(trans = "log") +
+  scale_y_continuous(trans = "log")
+
+
+ggplot(knn_first_connections) +
+  geom_point(aes(smallest_lambda, eff_res, color = dist)) +
+  scale_color_viridis_c(trans="sqrt") + 
+  scale_x_continuous(trans = "log") +
+  scale_y_continuous(trans = "log")
+
+
+ggplot(knn_first_connections) +
+  geom_point(aes(smallest_lambda, dist, color = eff_res)) +
+  scale_color_viridis_c(trans="sqrt") + 
+  scale_x_continuous(trans = "log") +
+  scale_y_continuous(trans = "log")
+
+cor(log(knn_first_connections$smallest_lambda), log(knn_first_connections$dist * knn_first_connections$eff_res))
+cor(log(knn_first_connections$smallest_lambda), log(knn_first_connections$eff_res))
+cor(log(knn_first_connections$smallest_lambda), log(knn_first_connections$dist))
+
+
+ggplot(knn_plot$edges) +
+  geom_point(aes(smallest_lambda, F_dagger_row_norm, color = eff_res)) +
+  scale_color_viridis_c(trans="sqrt") + 
+  scale_x_continuous(trans = "log") +
+  scale_y_continuous(trans = "log")
+```
