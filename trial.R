@@ -32,8 +32,8 @@ gammas <- seq(0, 100, 0.01)
 phi <- 1
 num_sparse_oracles <- 10
 
-p_withins <- seq(0.02, 0.5, 0.02)
-p_betweens <- seq(0.02, 0.5, 0.02)
+p_withins <- seq(0.02, 0.25, 0.01)
+p_betweens <- seq(0.02, 0.25, 0.01)
 
 make_row_for_run <- function(run, method, extra_params = "") {
   eff_res_df <- as.data.frame(run$pseudoinverse_info$effective_resistance) |>
@@ -49,6 +49,14 @@ make_row_for_run <- function(run, method, extra_params = "") {
         mutate(to = as.numeric(sub("V", "", to))),
       by = c("from", "to")
     )
+  
+  if(ncol(run$pseudoinverse_info$F_dagger) != nrow(run$trial$X)) {
+    F_dagger_E <- NA
+  } else {
+    F_dagger_E <- run$pseudoinverse_info$F_dagger %*% (run$trial$X - run$trial$U)
+  }
+
+  incidence_rank <- rankMatrix(run$pseudoinverse_info$F_dagger)
 
   tibble_row(
     method = method,
@@ -72,13 +80,17 @@ make_row_for_run <- function(run, method, extra_params = "") {
                                             (eff_res_df |> filter(from_label != to_label) |> pull(dist))),
     within_cluster_F_dagger_row_norm = sum(run$plot_dfs$edges |> filter(label == labelend) |> pull(F_dagger_row_norm)),
     between_cluster_F_dagger_row_norm = sum(run$plot_dfs$edges |> filter(label != labelend) |> pull(F_dagger_row_norm)),
-    max_F_dagger_row_norm = max(run$plot_dfs$edges$F_dagger_row_norm)
+    max_F_dagger_row_norm = max(run$plot_dfs$edges$F_dagger_row_norm),
+    F_dagger_E_max = max(abs(F_dagger_E)),
+    F_dagger_E_mean = mean(F_dagger_E),
+    F_dagger_E_mean_abs = mean(abs(F_dagger_E)),
+    incidence_rank = incidence_rank
   )
 }
 
 to_save <- tibble()
 
-for(k in 1:(nrow(trial$X) / 4)) {
+for(k in 1:(nrow(trial$X) - 1)) {
   knn_weights <- sparse_weights(trial$X, k, 0, connected = F, scale = F)
   knn_weights_run <- get_all_info(trial, knn_weights, gammas)
   to_save <- to_save |>

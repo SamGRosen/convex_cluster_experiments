@@ -1,9 +1,11 @@
-library(tidyverse)
+library(dplyr)
 library(CCMMR)
 library(MASS)
 library(Matrix)
-library(mvtnorm)
 library(aricode)
+library(gtools)
+library(tidyr)
+library(tibble)
 
 generate_trial <- function(num_clusters, per_cluster, means, covs) {
   X <- matrix(NA, nrow = 0, ncol = ncol(means))
@@ -70,7 +72,7 @@ get_sparse_oracle_graph <- function(per_cluster, clusters,
 
       combos <- expand.grid(cluster_keys, other_keys)
 
-      if(cluster == other_cluster) {
+      if(cluster != other_cluster) {
         new_edges <- combos[runif(nrow(combos)) < between_density,]
       } else {
         new_edges <- combos[runif(nrow(combos)) < within_density,]
@@ -179,7 +181,8 @@ get_pseudoinverse_info <- function(edge_dataset) {
 
   list(
     F_dagger_info = F_dagger_info,
-    effective_resistance = effective_resistance
+    effective_resistance = effective_resistance,
+    F_dagger = F_dagger
   )
 }
 
