@@ -44,16 +44,45 @@ make_row_for_run <- function(run, method, extra_params = "") {
         pivot_longer(!from, names_to = "to", values_to = "dist") |>
         mutate(to = as.numeric(sub("V", "", to))),
       by = c("from", "to")
+    ) |>
+    inner_join(
+      as.data.frame(as.matrix(dist(run$trial$U))) |>
+        mutate(from = row_number()) |>
+        pivot_longer(!from, names_to = "to", values_to = "true_dist") |>
+        mutate(to = as.numeric(sub("V", "", to))),
+      by = c("from", "to")
     )
-
+  
   if(ncol(run$pseudoinverse_info$F_dagger) != nrow(run$trial$X)) {
     F_dagger_E <- NA
+    max_F_dagger_E_row <- NA
+    sse_for_theorem_gamma <- NA
+    ari_for_theorem_gamma <- NA
   } else {
     F_dagger_E <- run$pseudoinverse_info$F_dagger %*% (run$trial$X - run$trial$U)
+    max_F_dagger_E_row <- max(sqrt(rowSums(F_dagger_E^2)))
+    
+    sse_for_theorem_gamma <- run$cluster_sse |>
+      filter(lambda > max_F_dagger_E_row) |>
+      slice_min(lambda) |>
+      pull(sse)
+
+    ari_for_theorem_gamma <- run$cluster_ari |> 
+      filter(max_F_dagger_E_row >= smallest_lambda,
+             max_F_dagger_E_row <= largest_lambda) |>
+      pull(ari)
+
+    if(length(sse_for_theorem_gamma) == 0) {
+      sse_for_theorem_gamma = NA
+    }
+    
+    if(length(ari_for_theorem_gamma) == 0) {
+      ari_for_theorem_gamma = NA
+    }
   }
-
+  
   incidence_rank <- rankMatrix(run$pseudoinverse_info$F_dagger)
-
+  
   tibble_row(
     method = method,
     extra_params = extra_params,
@@ -70,6 +99,7 @@ make_row_for_run <- function(run, method, extra_params = "") {
     between_cluster_eff_resistance = sum(eff_res_df |> filter(from_label != to_label) |> pull(eff_res)),
     within_cluster_dist = sum(eff_res_df |> filter(from_label == to_label) |> pull(dist)),
     between_cluster_dist = sum(eff_res_df |> filter(from_label != to_label) |> pull(dist)),
+    between_cluster_true_dist = sum(eff_res_df |> filter(from_label != to_label) |> pull(true_dist)),
     within_cluster_eff_dist_product = sum((eff_res_df |> filter(from_label == to_label) |> pull(eff_res)) *
                                             (eff_res_df |> filter(from_label == to_label) |> pull(dist))),
     between_cluster_eff_dist_product = sum((eff_res_df |> filter(from_label != to_label) |> pull(eff_res)) *
@@ -78,9 +108,11 @@ make_row_for_run <- function(run, method, extra_params = "") {
     between_cluster_F_dagger_row_norm = sum(run$plot_dfs$edges |> filter(label != labelend) |> pull(F_dagger_row_norm)),
     max_F_dagger_row_norm = max(run$plot_dfs$edges$F_dagger_row_norm),
     F_dagger_E_max = max(abs(F_dagger_E)),
-    F_dagger_E_mean = mean(F_dagger_E),
     F_dagger_E_mean_abs = mean(abs(F_dagger_E)),
-    incidence_rank = incidence_rank
+    incidence_rank = incidence_rank,
+    max_F_dagger_E_row = max_F_dagger_E_row,
+    sse_for_theorem_gamma = sse_for_theorem_gamma,
+    ari_for_theorem_gamma = ari_for_theorem_gamma
   )
 }
 
@@ -99,7 +131,7 @@ for(k in 1:(nrow(trial$X) - 1)) {
 }
 
 output_dir <- paste0(
-  "/cwork/sgr26/CONVEX_CLUSTERING_KNN",
+  "/cwork/sgr26/CONVEX_CLUSTERING_KNN_",
   JOB_ID,
   "/"
 )
@@ -115,7 +147,7 @@ save_success <- tryCatch(
   expr = {
     write.csv(
       to_save,
-      file = paste0(output_dir, "CONVEX_CLUSTERING_KNN", JOB_ID, "_", ARRAY_ID, ".csv"),
+      file = paste0(output_dir, "CONVEX_CLUSTERING_KNN_", JOB_ID, "_", ARRAY_ID, ".csv"),
       row.names = F)
     TRUE
   },
