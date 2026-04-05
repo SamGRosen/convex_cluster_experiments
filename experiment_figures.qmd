@@ -1,0 +1,595 @@
+```{r}
+library(tidyverse)
+library(ggrepel)
+combined_df <- read_csv("./CONVEX_CLUSTERING_43452368.csv")
+combined_knn_df <- read_csv("./knn_full.csv")
+knn_weighted <- read_csv("./knn_combined_weighted_scaled.csv")
+```
+
+```{r}
+sparse_advan <- combined_df |> filter(method == "sparse_oracle") |>
+  separate_wider_delim(
+    extra_params,
+    delim = ";",
+    names = c("p_within", "p_between")
+  ) |>
+  mutate(
+    p_within  = as.numeric(str_remove(p_within,  "p_within=")),
+    p_between = as.numeric(str_remove(p_between, "p_between="))) |>
+  mutate(p_within_bin = cut(p_within, c(0, 0.05, 0.15, 0.25)),
+         p_between_bin = cut(p_between, c(0, 0.05, 0.15, 0.25)),
+         edge_ratio = within_cluster_edges / between_cluster_edges,
+         prob_between = between_cluster_edges / (between_cluster_edges + within_cluster_edges),
+         best_mse = best_sse / 200,
+         theory_term = between_cluster_true_dist * F_dagger_E_max,
+         theory_term_norm = between_cluster_true_dist * F_dagger_E_max / (100 * sqrt(2)))
+
+combined_knn <- combined_knn_df |> 
+  mutate(k = as.numeric(str_remove(extra_params, "k=")),
+         k_bin = cut(k, c(1, 5, 10, 20, 30, 50, 100), right = F),
+         edge_ratio = within_cluster_edges / between_cluster_edges,
+         prob_between = between_cluster_edges / (between_cluster_edges + within_cluster_edges),
+         best_mse = best_sse / 200,
+         theory_term = between_cluster_true_dist * F_dagger_E_max,
+         theory_term_norm = between_cluster_true_dist * F_dagger_E_max / (100 * sqrt(2))) |>
+  dplyr::select(-extra_params)
+
+knn <- combined_knn |>
+  filter(method == "knn")
+
+knn_weighted <- knn_weighted |> 
+  mutate(k = as.numeric(str_remove(extra_params, "k=")),
+         k_bin = cut(k, c(1, 5, 10, 20, 30, 50, 100), right = F),
+         best_mse = best_sse / 200,
+         theory_term = between_cluster_true_dist * F_dagger_E_max,
+         theory_term_norm = between_cluster_true_dist * F_dagger_E_max / (100 * sqrt(2))) |>
+  dplyr::select(-extra_params)
+
+
+knn_connected <- knn |> filter(incidence_rank == 99)
+knn_weighted_connected <- knn_weighted |> filter(incidence_rank == 99)
+
+```
+
+```{r}
+quantile(knn_weighted_connected$theory_term_norm, c(0, 0.995), na.rm = T)
+ggplot(knn_weighted_connected,
+  aes(x = theory_term_norm, y = best_mse)) +
+  geom_hex(bins = 75) +
+  scale_fill_viridis_c(trans = "log10") +
+  scale_x_continuous(limits = c(1, 23.3)) +
+  scale_y_continuous(breaks = seq(0.10, 1, 0.15), limits = c(0.1, NA), name = "Mean squared error") +
+  theme_minimal()
+
+ggplot(knn_weighted_connected,
+  aes(x = theory_term_norm, y = best_sse)) +
+  geom_hex(bins = 75) +
+  scale_fill_viridis_c(trans = "log10") +
+  scale_x_continuous(trans = "log10") +
+  facet_wrap(~k_bin) +
+  theme_minimal()
+
+
+ggplot(knn_weighted_connected,
+  aes(x = theory_term_norm, y = best_ari)) +
+  geom_hex(bins = 75) +
+  scale_fill_viridis_c(trans = "log10") +
+  scale_x_continuous(trans = "log10") +
+  # facet_wrap(~k_bin) +
+  theme_minimal()
+
+```
+
+```{r}
+median_performance_by_k <- knn_connected |>
+  group_by(k) |>
+  summarise(
+    across(
+      c(best_ari, theory_term_norm, best_mse, prob_between, F_dagger_E_max, between_cluster_true_dist, prob_between),
+      list(
+        mean   = ~ mean(.x, na.rm = TRUE),
+        median = ~ median(.x, na.rm = TRUE),
+        q2.5   = ~ quantile(.x, 0.025, na.rm = TRUE),
+        q97.5  = ~ quantile(.x, 0.975, na.rm = TRUE)
+      ),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"
+  )
+
+median_performance_by_k_long <- median_performance_by_k |>
+  tidyr::pivot_longer(
+    -k,
+    names_to = c("variable", "stat"),
+    names_pattern = "^(.*)_([^_]+)$"
+  ) |>
+  pivot_wider(
+    names_from = stat,
+    values_from = value
+  )
+
+ggplot(median_performance_by_k_long |>
+         filter(variable %in% c("best_ari", "theory_term_norm", "best_mse", "prob_between")),
+       aes(x = k)) +
+  geom_line(aes(y = median)) +
+  geom_point(aes(y = median), size = 0.5) +
+  geom_ribbon(aes(ymin = q2.5,
+                  ymax = q97.5),
+                  alpha = 0.20, linetype = "blank") +
+  scale_x_continuous(breaks = c(2, seq(10, 90, 10), 99), expand = c(.01, .01)) +
+  facet_wrap(
+    ~ variable,
+    ncol = 1,
+    scales = "free_y",
+    strip.position = "right"
+    # labeller = as_labeller(c(
+    #     "best_ari" = "ARI",
+    #     "theory_term_norm" = "Oracle",
+    #     "best_mse" = "MSE"
+    #   ))
+  ) +
+  ggh4x::facetted_pos_scales(
+    y = list(
+      variable == "best_ari" ~ scale_y_continuous(
+        breaks = seq(0, 0.9, 0.15), expand = c(0.01, 0.01)),
+      variable == "theory_term_norm" ~ scale_y_continuous(
+        trans = "log10", breaks = c(2, 4, 8, 16), expand = c(0.01, 0.01)),
+      variable == "F_dagger_E_max" ~ scale_y_continuous(
+        trans = "log10", expand = c(0.01, 0.01)),
+      variable == "between_cluster_true_dist" ~ scale_y_continuous(
+        trans = "identity", expand = c(0.01, 0.01)),
+      variable == "best_mse" ~ scale_y_continuous(
+        breaks = seq(.35, 2, 0.15), expand = c(0.01, 0.01))
+    )
+  ) + 
+  theme_bw() +
+  theme(strip.text.y.left = element_text(angle = 90),
+        axis.title.y = element_blank()) +
+  ggtitle("Performance metrics for k-NN graphs",
+          subtitle = "Median and 95% intervals")
+
+# 
+# ggsave(file="./figures/knn-metrics.pdf", device="pdf",
+#        dpi = 600,
+#        width = 2.5,
+#        height = 2,
+#        units = "in",
+#        scale = 2)
+
+```
+
+```{r}
+median_performance_by_k_weighted <- knn_weighted_connected |>
+  group_by(k) |>
+  summarise(
+    across(
+      c(best_ari, theory_term_norm, best_mse),
+      list(
+        mean   = ~ mean(.x, na.rm = TRUE),
+        median = ~ median(.x, na.rm = TRUE),
+        q2.5   = ~ quantile(.x, 0.025, na.rm = TRUE),
+        q97.5  = ~ quantile(.x, 0.975, na.rm = TRUE)
+      ),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"
+  )
+
+median_performance_by_k_weighted_long <- median_performance_by_k_weighted |>
+  tidyr::pivot_longer(
+    -k,
+    names_to = c("variable", "stat"),
+    names_pattern = "^(.*)_([^_]+)$"
+  ) |>
+  pivot_wider(
+    names_from = stat,
+    values_from = value
+  )
+
+ggplot(median_performance_by_k_weighted_long |>
+         filter(variable %in% c("best_ari", "theory_term_norm", "best_mse")),
+       aes(x = k)) +
+  geom_line(aes(y = median)) +
+  geom_point(aes(y = median), size = 0.5) +
+  geom_ribbon(aes(ymin = q2.5,
+                  ymax = q97.5),
+                  alpha = 0.20, linetype = "blank") +
+  scale_x_continuous(breaks = c(2, seq(10, 90, 10), 99), expand = c(.01, .01)) +
+  facet_wrap(
+    ~ variable,
+    ncol = 1,
+    scales = "free_y",
+    strip.position = "right",
+    labeller = as_labeller(c(
+        "best_ari" = "ARI",
+        "theory_term_norm" = "Oracle",
+        "best_mse" = "MSE"
+      ))
+  ) +
+  ggh4x::facetted_pos_scales(
+    y = list(
+      variable == "best_ari" ~ scale_y_continuous(
+        breaks = seq(0, 0.9, 0.15), expand = c(0.01, 0.01)),
+      variable == "theory_term_norm" ~ scale_y_continuous(
+        trans = "log10", breaks = c(2, 4, 8, 16), expand = c(0.01, 0.01)),
+      variable == "best_mse" ~ scale_y_continuous(
+        breaks = seq(.35, 2, 0.15), expand = c(0.01, 0.01))
+    )
+  ) + 
+  theme_bw() +
+  theme(strip.text.y.left = element_text(angle = 90),
+        axis.title.y = element_blank()) +
+  ggtitle("Performance metrics for weighted k-NN graphs",
+          subtitle = "Median and 95% intervals")
+
+
+```
+
+
+```{r}
+
+ggplot(knn_connected,
+  aes(x = F_dagger_E_max, y = best_mse)) +
+  geom_hex(bins = 75) +
+  scale_fill_viridis_c(trans = "log10", breaks = 10^seq(0, 4)) +
+  scale_color_viridis_c(option = "inferno") +
+  scale_x_continuous(trans = "log10") +
+  # labs(y = "Adjusted Rand Index") +
+  theme_minimal()
+
+ggplot(knn_connected,
+  aes(x = between_cluster_true_dist, y = best_mse)) +
+  geom_hex(bins = 75) +
+  scale_fill_viridis_c(trans = "log10", breaks = 10^seq(0, 4)) +
+  scale_color_viridis_c(option = "inferno") +
+  # labs(y = "Adjusted Rand Index") +
+  theme_minimal()
+
+ggplot(knn_connected,
+  aes(x = theory_term, y = best_sse_lambda)) +
+  geom_hex(bins = 75) +
+  scale_fill_viridis_c(trans = "log10", breaks = 10^seq(0, 4)) +
+  scale_color_viridis_c(option = "inferno") +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  theme_minimal()
+```
+
+```{r}
+
+k_labels <- c(2, seq(5, 30, 5), seq(40, 80, 10), 99)
+
+ggplot(knn_connected,
+  aes(x = prob_between, y = best_ari)) +
+  geom_hex(bins = 75) +
+  scale_fill_viridis_c(trans = "log10", breaks = 10^seq(0, 4), name = "Count") +
+  scale_x_continuous(breaks = seq(0, 1, 0.15), name = "Between-cluster edge probability") +
+  scale_y_continuous(breaks = seq(0, 1, 0.15), name = "Adjusted Rand Index") +
+  ggtitle("Summary of clustering quality for k-nearest neighbor graphs") +
+  theme_minimal()
+
+ggsave(file="./figures/knn-between-prob-ari.pdf", device="pdf",
+       dpi = 600,
+       width = 3,
+       height = 2,
+       units = "in",
+       scale = 2)
+
+```
+
+
+```{r}
+
+oracle_tex <- r'($\frac{1}{n} \|\textbf{F}^\dagger \textbf{E}\|_{\max} \sum \sqrt{\Phi_{ij}} \|\textbf{U}_{i\cdot} - \textbf{U}_{j\cdot}\|_2$)'
+
+quantile(knn_connected$theory_term_norm,
+         c(0, 0.9, 0.95, 0.99, 0.995, 0.999))
+
+k_labels <- c(2, seq(5, 25, 5), seq(40, 80, 20), 99)
+
+ggplot(knn_connected,
+  aes(x = theory_term_norm, y = best_mse)) +
+  geom_hex(bins = 75) +
+  geom_path(data = median_performance_by_k, aes(x = theory_term_norm_median, y = best_mse_median)) +
+  geom_point(data = median_performance_by_k, 
+             aes(x = theory_term_norm_median, y = best_mse_median),
+             size = 1) + 
+  geom_label_repel(
+    data = median_performance_by_k |> filter(k %in% k_labels),
+    aes(label = k, x = theory_term_norm_median, y = best_mse_median),
+    size = 3,
+    alpha = 0.75,
+    box.padding = 0.5,
+    max.overlaps = 50,
+    segment.linetype = "dotdash",
+    segment.color = "black",
+    min.segment.length = 0.25,
+    # # xlim = c(NA, log10(2000)),
+    # label.padding = 0.15,
+    # direction = "y",
+    seed = 4
+    # nudge_x = rep(c(.125, -.125), 8)
+  ) +
+  scale_fill_viridis_c(trans = "log10", name = "Count") +
+  scale_y_continuous(breaks = seq(0.10, 1, 0.15), limits = c(0.1, NA), name = "Mean squared error") +
+  scale_x_continuous(limits = c(1, 12.5), name = "Oracle term") +
+  # scale_x_continuous(limits = c(1, 12.5), name = TeX(oracle_tex)) +
+  ggtitle("Summary of centroid recovery for k-nearest neighbor graphs") +
+  theme_minimal()+
+  theme(
+    axis.title = element_text(size = 12)
+  )
+
+mean(knn_connected$theory_term_norm < 12.5)
+
+ggsave(file="./figures/knn-oracle-mse.pdf", device="pdf",
+       dpi = 600,
+       width = 3,
+       height = 2,
+       units = "in",
+       scale = 2)
+```
+
+```{r}
+ggplot(knn_connected,
+  aes(x = F_dagger_E_max, between_cluster_true_dist)) +
+  geom_hex(bins = 75) +
+  scale_fill_viridis_c(trans = "log10", name = "Count") +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  ggtitle("Summary of centroid recovery for k-nearest neighbor graphs") +
+  theme_minimal()
+
+ggplot(knn_connected,
+  aes(x = F_dagger_E_max, between_cluster_true_dist, z = best_ari)) +
+  stat_summary_hex(fun = function(x) median(x), bins = 50) +
+  scale_fill_viridis_c(trans = "identity", name = "best ari", limits = c(0, 1)) +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  ggtitle("Summary of centroid recovery for k-nearest neighbor graphs") +
+  theme_minimal()
+
+
+ggplot(knn_connected,
+  aes(x = F_dagger_E_max, between_cluster_true_dist, z = best_sse_lambda)) +
+  stat_summary_hex(fun = function(x) median(x), bins = 75) +
+  scale_fill_viridis_c(trans = "log10", name = "best sse lambda") +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  ggtitle("Summary of centroid recovery for k-nearest neighbor graphs") +
+  theme_minimal()
+
+ggplot(knn_connected,
+  aes(x = best_sse_lambda, y = k, z = best_sse)) +
+  stat_summary_hex(fun = function(x) median(x), bins = 75) +
+  scale_fill_viridis_c(trans = "log10", name = "best sse") +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  ggtitle("Summary of centroid recovery for k-nearest neighbor graphs") +
+  theme_minimal()
+
+ggplot(knn_connected) +
+  stat_summary_hex(aes(x = F_dagger_E_max, 
+                       y = between_cluster_true_dist,
+                       z = best_mse), fun = function(x) median(x), bins = 50) +
+  scale_fill_viridis_c(trans = "identity", name = "best mse") +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  ggtitle("Summary of centroid recovery for k-nearest neighbor graphs") +
+  theme_minimal() +
+  geom_path(data = median_performance_by_k, aes(x = F_dagger_E_max_median, y = between_cluster_true_dist_median)) +
+  geom_point(data = median_performance_by_k, 
+             aes(x = F_dagger_E_max_median, y = between_cluster_true_dist_median),
+             size = 1)
+  # geom_label_repel(
+  #   data = median_performance_by_k |> filter(k %in% k_labels),
+  #   aes(label = k, x = F_dagger_E_max_median, y = between_cluster_true_dist_median),
+  #   # size = 3,
+  #   # alpha = 0.75,
+  #   box.padding = 0.5,
+  #   max.overlaps = 50,
+  #   segment.linetype = "dotdash",
+  #   segment.color = "black",
+  #   min.segment.length = 0.25,
+  #   # # xlim = c(NA, log10(2000)),
+  #   # label.padding = 0.15,
+  #   # direction = "x",
+  #   # seed = 4
+  #   # nudge_x = rep(c(.125, -.125), 8)
+  # )
+
+
+```
+
+
+
+```{r}
+
+sparse_advan <- sparse_advan |> filter(incidence_rank == 99)
+quantile(sparse_advan$theory_term_norm, 
+         c(0, 0.9, 0.95, 0.99, 0.995, 0.999))
+
+performance_by_prob_ratio <- sparse_advan |>
+  mutate(prob_ratio = p_within / p_between,
+         prob_ratio_bin = cut(prob_ratio, c(0, 0.25, 0.5, seq(1, 12, 1), 12.5))) |>
+  group_by(prob_ratio_bin) |>
+  summarise(prob_between = median(prob_between),
+            best_ari = median(best_ari),
+            theory_term = median(theory_term),
+            theory_term_norm = median(theory_term_norm),
+            best_sse = median(best_sse),
+            best_mse = median(best_mse),
+            n = n()) |>
+  ungroup() |>
+  arrange(prob_ratio_bin) |>
+  mutate(bin_index = row_number())
+```
+
+```{r}
+ggplot(sparse_advan,  
+  aes(x = prob_between, y = best_ari)) +
+  geom_hex(bins = 75) +
+  scale_fill_viridis_c(trans = "log10", breaks = 10^seq(0, 4, 1)) +
+  theme_minimal()
+
+ggplot(sparse_advan,  
+  aes(x = prob_between, y = best_sse)) +
+  geom_hex(bins = 75) +
+  scale_fill_viridis_c(trans = "log10", breaks = 10^seq(0, 4, 1)) +
+  theme_minimal()
+
+ggplot(sparse_advan,  
+  aes(x = prob_between, y = F_dagger_E_max)) +
+  geom_hex(bins = 75) +
+  scale_fill_viridis_c(trans = "log10", breaks = 10^seq(0, 4, 1)) +
+  theme_minimal()
+```
+
+
+```{r}
+performance_by_each_prob <- sparse_advan |>
+  mutate(prob_ratio = p_within / p_between) |>
+  group_by(p_within, p_between) |>
+  summarise(best_ari = median(best_ari),
+            theory_term = median(theory_term),
+            theory_term_norm = median(theory_term_norm),
+            best_sse = median(best_sse),
+            best_mse = median(best_mse),
+            F_dagger_E_max = median(F_dagger_E_max),
+            n = n(),
+            .groups = "drop") |>
+  ungroup() |>
+  arrange(p_within / p_between)
+
+ggplot(performance_by_each_prob, aes(p_between, p_within)) +
+  geom_tile(aes(fill = best_ari)) +
+  scale_fill_viridis_c(option = "B", trans = "sqrt", breaks = seq(0, 1, 0.15))
+
+ggplot(performance_by_each_prob, aes(p_between, p_within)) +
+  geom_tile(aes(fill = best_sse)) +
+  scale_fill_viridis_c(option = "B", trans = "sqrt")
+
+ggplot(performance_by_each_prob, aes(p_between, p_within)) +
+  geom_tile(aes(fill = theory_term)) +
+  scale_fill_viridis_c(option = "B")
+
+```
+
+```{r}
+
+ggplot(sparse_advan,  
+  aes(x = theory_term_norm, y = best_ari)) +
+  geom_hex(bins = 75) +
+  # geom_path(data = performance_by_prob_ratio) +
+  # geom_point(data = performance_by_prob_ratio,
+  #            size = 1.5) +
+  # geom_label_repel(
+  #   data = performance_by_prob_ratio |> filter(bin_index %in% seq(1, 15, 2)),
+  #   aes(label = prob_ratio_bin),
+  #   size = 3,
+  #   alpha = 0.75,
+  #   box.padding = 0.5,
+  #   max.overlaps = 50,
+  #   segment.linetype = "dotdash",
+  #   segment.color = "black",
+  #   min.segment.length = 0.25,
+  #   xlim = c(NA, log10(2000)),
+  #   label.padding = 0.15,
+  #   direction = "x",
+  #   seed = 4,
+  #   nudge_x = rep(c(.125, -.125), 8)
+  # ) +
+  scale_fill_viridis_c(trans = "log10", breaks = 10^seq(0, 4, 1), name = "Count") +
+  scale_x_continuous(trans = "log10", name = "Oracle term") +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), name = "Adjusted Rand Index") +
+  ggtitle("Summary of clustering quality for sparse advantageous graphs") +
+  theme_minimal() +
+  theme(
+    axis.title = element_text(size = 12)
+  )
+
+
+ggsave(file="./figures/sparse-advan-ari.pdf", device="pdf",
+       dpi = 600,
+       width = 3,
+       height = 2,
+       units = "in",
+       scale = 2)
+
+```
+
+```{r}
+ggplot(sparse_advan,
+  aes(x = theory_term_norm, y = best_mse)) +
+  geom_hex(bins = 75) +
+  # geom_path(data = performance_by_prob_ratio) +
+  # geom_point(data = performance_by_prob_ratio,
+  #            size = 1.5) +
+  # geom_label_repel(
+  #   data = performance_by_prob_ratio |> filter(bin_index %in% seq(1, 15, 2)),
+  #   aes(label = prob_ratio_bin),
+  #   size = 3,
+  #   alpha = 0.75,
+  #   box.padding = 0.5,
+  #   max.overlaps = 50,
+  #   segment.linetype = "dotdash",
+  #   segment.color = "black",
+  #   min.segment.length = 0.25,
+  #   label.padding = 0.15,
+  #   direction = "x",
+  #   nudge_y = c(rep(0, 7), -0.1),
+  #   seed = 2
+  # ) +
+  scale_fill_viridis_c(trans = "log10", breaks = 10^seq(0, 4, 1), name = "Count") +
+  scale_x_continuous(limits = c(.75, 12.5), name = "Oracle term") +
+  scale_y_continuous(breaks = seq(0, 2, 0.15), name = "Mean squared error") +
+  ggtitle("Summary of centroid recovery for sparse advantageous graphs") +
+  theme_minimal() +
+  theme(
+    axis.title = element_text(size = 12)
+  )
+
+mean(sparse_advan$theory_term_norm < 12.5)
+
+ggsave(file="./figures/sparse-advan-mse.pdf", device="pdf",
+       dpi = 600,
+       width = 3,
+       height = 2,
+       units = "in",
+       scale = 2)
+```
+
+# Compare KNN
+
+```{r}
+
+knn_combined <- knn |> mutate(trial = rep(1:(nrow(knn) / 99), each = 99)) |>
+  inner_join(
+    knn_weighted |> mutate(trial = rep(1:(nrow(knn_weighted) / 99), each = 99)),
+    suffix = c(".unweighted", ".weighted"),
+    by = c("k", "trial")
+  ) |>
+  mutate(k_bin = cut(k, c(1, 5, 10, 20, 30, 50, 100), right = F))
+
+ggplot(knn_combined, aes(x = k, y = best_ari.unweighted - best_ari.weighted, group = k)) +
+  geom_boxplot() +
+  theme_minimal()
+
+ggplot(knn_combined, aes(x = k, y = best_sse.unweighted - best_sse.weighted, group = k)) +
+  geom_boxplot() +
+  theme_minimal()
+
+ggplot(knn_combined, aes(x = best_sse.unweighted, y = best_sse.weighted)) +
+  geom_hex(bins = 75) +
+  geom_abline(slope = 1) + 
+  scale_fill_viridis_c(trans = "log10") +
+  theme_minimal() +
+  facet_wrap(~k_bin)
+
+ggplot(knn_combined, aes(x = best_ari.unweighted, y = best_ari.weighted)) +
+  geom_hex(bins = 75) +
+  geom_abline(slope = 1) + 
+  scale_fill_viridis_c(trans = "log10") +
+  theme_minimal() +
+  facet_wrap(~k_bin)
+```
