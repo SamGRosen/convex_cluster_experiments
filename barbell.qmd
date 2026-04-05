@@ -1,0 +1,66 @@
+---
+title: "barbell"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+
+clique_size <- 5
+
+clique_1 <- tibble(
+  x = cos(2 * pi * seq(0, 1 - 1 / clique_size, length.out = (clique_size))),
+  y = sin(2 * pi * seq(0, 1 - 1 / clique_size, length.out = (clique_size))),
+  id = c("E", "D", "A", "F", "")
+)
+
+clique_2 <- tibble(
+  x = cos(2 * pi * seq(0, 1 - 1 / clique_size,
+                       length.out = (clique_size)) + pi / clique_size) + 2.5,
+  y = sin(2 * pi * seq(0, 1 - 1 / clique_size,
+                       length.out = (clique_size)) + pi / clique_size),
+  id = c("B", "C", "", "", ""),
+)
+
+pairs_1 <- crossing(
+  clique_1 |> select(x, y) |> rename(x1 = x, y1 = y),
+  clique_1 |> select(x, y) |> rename(x2 = x, y2 = y)
+)
+
+pairs_2 <- crossing(
+  clique_2 |> select(x, y) |> rename(x1 = x, y1 = y),
+  clique_2 |> select(x, y) |> rename(x2 = x, y2 = y)
+)
+
+edges <- bind_rows(
+  pairs_1,
+  pairs_2
+) |>
+  add_row(x1 = max(clique_1$x), x2 = min(clique_2$x),
+          y1 = 0, y2 = 0) |>
+  add_row(x1 = clique_1$x[which.max(clique_1$y)], y1 = max(clique_1$y),
+          x2 = clique_2$x[which.max(clique_2$y)], y2 = max(clique_2$y)) |>
+  add_row(x1 = clique_1$x[which.min(clique_1$y)], y1 = min(clique_1$y),
+          x2 = clique_2$x[which.min(clique_2$y)], y2 = min(clique_2$y))
+```
+
+You can add options to executable code like this
+
+```{r}
+ggplot(bind_rows(clique_1, clique_2), aes(x, y)) + 
+  geom_point(size = 8) +
+    geom_segment(
+    data = edges,
+    aes(x = x1, y = y1, xend = x2, yend = y2)
+  ) +
+  geom_text(aes(label = id), color = "white", fontface = "bold", size = 5) +
+  theme_void()
+
+ggsave(file="oracle_graph.pdf", device="pdf",
+       dpi = 300,
+       width = 3,
+       height = 1.5,
+       units = "in",
+       scale = 2)
+```
