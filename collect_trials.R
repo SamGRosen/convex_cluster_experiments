@@ -1,7 +1,7 @@
 library(tidyverse)
 
 pattern = "CONVEX_CLUSTERING_KNN_43363704"
-path = paste0("/cwork/sgr26/", pattern)
+path = paste0("~/", pattern)
 
 print(paste("Getting files for path", path))
 

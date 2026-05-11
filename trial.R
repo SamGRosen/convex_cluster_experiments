@@ -56,7 +56,7 @@ make_row_for_run <- function(run, method, extra_params = "") {
         mutate(to = as.numeric(sub("V", "", to))),
       by = c("from", "to")
     )
-  
+
   if(ncol(run$pseudoinverse_info$F_dagger) != nrow(run$trial$X)) {
     F_dagger_E <- NA
     max_F_dagger_E_row <- NA
@@ -65,13 +65,13 @@ make_row_for_run <- function(run, method, extra_params = "") {
   } else {
     F_dagger_E <- run$pseudoinverse_info$F_dagger %*% (run$trial$X - run$trial$U)
     max_F_dagger_E_row <- max(sqrt(rowSums(F_dagger_E^2)))
-    
+
     sse_for_theorem_gamma <- run$cluster_sse |>
       filter(lambda > max_F_dagger_E_row) |>
       slice_min(lambda) |>
       pull(sse)
-    
-    ari_for_theorem_gamma <- run$cluster_ari |> 
+
+    ari_for_theorem_gamma <- run$cluster_ari |>
       filter(max_F_dagger_E_row >= smallest_lambda,
              max_F_dagger_E_row <= largest_lambda) |>
       pull(ari)
@@ -84,9 +84,9 @@ make_row_for_run <- function(run, method, extra_params = "") {
       ari_for_theorem_gamma = NA
     }
   }
-  
+
   incidence_rank <- rankMatrix(run$pseudoinverse_info$F_dagger)
-  
+
   tibble_row(
     method = method,
     extra_params = extra_params,
@@ -137,7 +137,7 @@ for(p_within in p_withins) {
 
 
 output_dir <- paste0(
-  "/cwork/sgr26/CONVEX_CLUSTERING_",
+  "~/CONVEX_CLUSTERING_",
   JOB_ID,
   "/"
 )
