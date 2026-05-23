@@ -7,6 +7,15 @@ library(gtools)
 library(tidyr)
 library(tibble)
 
+
+#' Generate data from a Gaussian mixture model with given means and covariances.
+#'
+#' @param num_clusters Number of clusters
+#' @param per_cluster Number of points to generate per cluster
+#' @param means Matrix with cluster means as rows
+#' @param covs Array with cluster covariance in last index
+#'
+#' @returns list with `X` as generated data, `U` as true centers, and `labels` as labels
 generate_trial <- function(num_clusters, per_cluster, means, covs) {
   X <- matrix(NA, nrow = 0, ncol = ncol(means))
   for(cluster in 1:num_clusters) {
@@ -27,6 +36,14 @@ generate_trial <- function(num_clusters, per_cluster, means, covs) {
   )
 }
 
+
+#' Generate affinities with all points in the same cluster having positive affinites
+#' and a single affinity per pair of clusters
+#'
+#' @param per_cluster Size of each cluster
+#' @param clusters Number of clusters
+#'
+#' @returns `sparseweights` object for input to `CCMMR`
 get_oracle_graph <- function(per_cluster, clusters) {
   keys <- gtools::permutations(per_cluster, 2)
   for(cluster in 1:(clusters-1)) {
@@ -60,6 +77,15 @@ get_oracle_graph <- function(per_cluster, clusters) {
   )
 }
 
+
+#' Generate random affinities with specific edge connecitivty within/between cluster
+#'
+#' @param per_cluster Number of points per cluster
+#' @param clusters Number of clusters
+#' @param within_density Percent of edges within cluster to generate
+#' @param between_density Percent of edges between clusters to generate
+#'
+#' @returns `sparseweights` object for input to `CCMMR`
 get_sparse_oracle_graph <- function(per_cluster, clusters,
                                     within_density = 1, between_density = 1) {
   keys <- matrix(NA, nrow = 0, ncol = 2)
@@ -93,6 +119,13 @@ get_sparse_oracle_graph <- function(per_cluster, clusters,
   )
 }
 
+
+#' Given data, generate Gaussian kernel affinities
+#'
+#' @param X Input data, with samples as rows
+#' @param phi Kernel hyperparameter: exp(-phi * \|X_i - X_j\|_2^2)
+#'
+#' @returns `sparseweights` object for input to `CCMMR`
 get_fully_connected_weighted_graph <- function(X, phi) {
   d <- dist(X)
   d2 <- as.vector(d)^2
@@ -105,6 +138,14 @@ get_fully_connected_weighted_graph <- function(X, phi) {
   )
 }
 
+
+#' Generate dataframes useful for plotting affinity graphs
+#'
+#' @param X input data
+#' @param labels labels for each data point
+#' @param sparseweights `sparseweights` object used by CCMMR
+#'
+#' @returns list with `points` and `edges` keys for plotting
 get_plot_dfs <- function(X, labels, sparseweights) {
   points_to_plot <- tibble(
     x = X[, 1],
@@ -142,6 +183,12 @@ get_plot_dfs <- function(X, labels, sparseweights) {
   )
 }
 
+
+#' Create a sparse incidence matrix from an edge dataset
+#'
+#' @param edge_dataset `edges` dataframe from `get_plot_dfs`
+#'
+#' @returns `sparseMatrix`
 make_incidence_matrix <- function(edge_dataset) {
   graph_edges <- edge_dataset |> filter(
     from > to
@@ -156,6 +203,15 @@ make_incidence_matrix <- function(edge_dataset) {
   )
 }
 
+
+#' From an edge dataset, generate affinity graph info from the pseudoinverse of
+#' the incidence matrix
+#'
+#' @param edge_dataset `edges` dataframe from `get_plot_dfs`
+#'
+#' @returns list with pseudoinverse as `F_dagger` key,
+#'  `F_dagger_info` for diagnostics, and
+#'  `effective_resistance` for effective resistance of each edge
 get_pseudoinverse_info <- function(edge_dataset) {
   graph_edges <- edge_dataset |> filter(
     from > to
@@ -186,6 +242,15 @@ get_pseudoinverse_info <- function(edge_dataset) {
   )
 }
 
+
+#' Given input data, affinities and hyperparameters, calculate solution path with
+#' clustering info.
+#'
+#' @param X Input data
+#' @param weights input weights
+#' @param gammas grid of hyperparameters
+#'
+#' @returns list with `clusters_df` and `solutions_df`
 get_solutions_info <- function(X, weights, gammas) {
   clusterpath = convex_clusterpath(
     X, weights, gammas,
@@ -225,6 +290,12 @@ get_solutions_info <- function(X, weights, gammas) {
   )
 }
 
+
+#' Find which hyperparameter groups two data points together first
+#'
+#' @param cluster_df from `get_solutions_info`
+#'
+#' @returns dataframe of smallest hyperparameter and pairs of points
 get_first_connections <- function(cluster_df) {
   cross_join(cluster_df, cluster_df) |>
     filter(id.x != id.y, est_label.x == est_label.y, num_cluster.x == num_cluster.y) |>
@@ -234,6 +305,15 @@ get_first_connections <- function(cluster_df) {
               .groups = "drop")
 }
 
+
+#' Given a trial and `sparseweights`, calculate the solution path and generate
+#' all info needed for experiments
+#'
+#' @param trial output of `generate_trial`
+#' @param weights `sparseweights` object for `CCMMR`
+#' @param gammas hyperparameter grid
+#'
+#' @returns large list with all info
 get_all_info <- function(trial, weights, gammas) {
   plot_dfs <- get_plot_dfs(trial$X, trial$labels, weights)
   pseudoinverse_info <- get_pseudoinverse_info(plot_dfs$edges)

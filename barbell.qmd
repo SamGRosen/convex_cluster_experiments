@@ -45,8 +45,6 @@ edges <- bind_rows(
           x2 = clique_2$x[which.min(clique_2$y)], y2 = min(clique_2$y))
 ```
 
-You can add options to executable code like this
-
 ```{r}
 ggplot(bind_rows(clique_1, clique_2), aes(x, y)) + 
   geom_point(size = 8) +
